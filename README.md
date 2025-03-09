@@ -26,3 +26,7 @@ Git commit [prerequisites](https://docs.github.com/en/get-started/git-basics/set
 git config --global user.email X
 git config --global user.name X
 ```
+
+ReadMe [formatting](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax):
+
+not sure why, but readme HTML tags require 2 linebreaks in order to render readme formatting symbols, 1 linebreak prints everything inside like pure HTML :confused:
