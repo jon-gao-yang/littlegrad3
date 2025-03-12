@@ -7,12 +7,17 @@ import time
 
 def my_test():
     a = [2, 3]
-    b = [5, 10]
+    b = [[5, 10]]
     c = 4
+    threshold = 1e-10    # for some reason in cupy 1/b and b**-1 give slightly different answers, so Tensor and cupy array division gives slightly different answers
 
-    #a = -5
-    #b = 3
-    #c = 1
+    # a = [2., 3.]
+    # b = [[5., 10.]]
+    # c = 4.
+
+    # a = -5
+    # b = 3
+    # c = 1
 
     aVal = Tensor(a)
     bVal = Tensor(b)
@@ -24,15 +29,30 @@ def my_test():
     print("b:      | Passed == ", type(bVal) == Tensor)
     print("a.data: | Passed == ", aVal.data == a)
     print("b.data: | Passed == ", bVal.data == b)
+    print("a.ndim: | Passed == ", aVal.data.ndim == 2)
+    print("b.ndim: | Passed == ", bVal.data.ndim == 2)
+
     print("a+c:    | Passed == ", (aVal+c).data == a+c)
     print("c+a:    | Passed == ", (c+aVal).data == c+a)
+    print("a+b:    | Passed == ", (aVal+bVal).data == a+b)
+    print("b+a:    | Passed == ", (bVal+aVal).data == b+a)
+
     print("a-c:    | Passed == ", (aVal-c).data == a-c)
     print("c-a:    | Passed == ", (c-aVal).data == c-a)
+    print("a-b:    | Passed == ", (aVal-bVal).data == a-b)
+    print("b-a:    | Passed == ", (bVal-aVal).data == b-a)
+
     print("a*c:    | Passed == ", (aVal*c).data == a*c)
     print("c*a:    | Passed == ", (c*aVal).data == c*a)
+    print("a*b:    | Passed == ", (aVal*bVal).data == a*b)
+    print("b*a:    | Passed == ", (bVal*aVal).data == b*a)
+
+    print("a/c:    | Passed == ", (aVal/c).data -  a/c < threshold)
+    print("c/a:    | Passed == ", (c/aVal).data - c/a < threshold)
+    print("a/b:    | Passed == ", (aVal/bVal).data - a/b < threshold)
+    print("b/a:    | Passed == ", (bVal/aVal).data - b/a < threshold)
+
     print("-a:     | Passed == ", (-aVal).data == -a)
-    print("a/c:    | Passed == ", (aVal/c).data == a/c)
-    print("c/a:    | Passed == ", (c/aVal).data == c/a)
     print("a**c:   | Passed == ", (aVal**c).data == a**c)
     print("c**a:   | Passed == ", (c**aVal).data == c**a)
     print()
@@ -310,9 +330,9 @@ def kaggle_training(epochs = 10, batch_size = None):
 
 #############################################################################################
 
-#my_test()
+my_test()
 #test_sanity_check()
 #test_more_ops()
 #mlp_test()
 
-kaggle_training(epochs = 510, batch_size = 400)
+#kaggle_training(epochs = 510, batch_size = 400)

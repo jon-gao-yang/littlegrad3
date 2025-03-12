@@ -25,7 +25,7 @@ README FORMATTING [[source](https://docs.github.com/en/get-started/writing-on-gi
 
 not sure why, but readme HTML tags require 2 linebreaks in order to render readme formatting symbols, 1 linebreak prints everything inside like pure HTML :confused:
 
-GITIGNORE FORMATTING[[source](https://git-scm.com/docs/gitignore#_examples)]
+GITIGNORE FORMATTING [[source](https://git-scm.com/docs/gitignore#_examples)]
 
 ```
 inside .gitignore:
@@ -116,6 +116,22 @@ automatic differentiation is based on a property of differentiation known as the
 if the same variable (parameter) is used in multiple intermediate functions, the partial derivative for that variable is the sum of the partial derivatives of the intermediate functions ([further reading](https://en.wikipedia.org/wiki/Chain_rule#Multivariable_case)).
 
 ### LIBRARY PROGRAMMING NOTES
+
+LAMBDA FUNCTIONS [[source](https://www.w3schools.com/python/python_lambda.asp)]
+
+a lambda function is a function with no name that can only execute a single expression. the entire function can be written in one line, for example `lambda a, b: a+b` which returns the sum of its two arguments. the Tensor `__init__()` method contains a `lamda: None` function as a placeholder, which is later replaced with an actual function that backpropagates a gradient through a specific array operation.
+
+TODO:
+
+matmul
+
+log
+
+exp
+
+backward() and toposort
+
+WHY SET() IS NECESSARY FOR TENSOR CHILDREN
 
 TENSOR IMPLEMENTATION NOTES
 
