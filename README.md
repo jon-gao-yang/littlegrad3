@@ -123,13 +123,11 @@ a lambda function is a function with no name that can only execute a single expr
 
 TODO:
 
-matmul
+copy all the littlegrad2 Tensor methods
 
-log
+explain all the Tensor methods
 
-exp
-
-backward() and toposort
+get mnist.py LinearNet working
 
 WHY SET() IS NECESSARY FOR TENSOR CHILDREN
 
