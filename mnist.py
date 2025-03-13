@@ -7,66 +7,6 @@ import time
 
 ###### [ 1/4 : MODEL INITIALIZATION ] ######
 
-class TestNet:
-    def __init__(self):
-        
-        self.params = { # 2 / (# of inputs from last layer) for He initialization
-            'f1' : Tensor(cp.random.randn(6, 1, 5, 5) * cp.sqrt(2 / (28*28*1))),
-            'f2' : Tensor(cp.random.randn(16, 6, 5, 5) * cp.sqrt(2 / (12*12*6))),
-
-            'w1' : Tensor(cp.random.randn(4*4*16, 64) * cp.sqrt(2 / (4*4*16))),
-            'b1' : Tensor(cp.zeros((1, 64))),
-            'w2' : Tensor(cp.random.randn(64, 10) * cp.sqrt(2 / (64))),
-            'b2' : Tensor(cp.zeros((1, 10))),
-        }
-
-    def __call__(self, x:Tensor) -> Tensor:
-        l1 = x.reshape((-1, 1, 28, 28)).conv(self.params['f1']).relu().maxPool2d()
-        l2 = l1.conv(self.params['f2']).relu().maxPool2d()
-        l3 = ((l2.reshape((-1, self.params['w1'].data.shape[0])) @ self.params['w1']) + self.params['b1']).relu()
-        return ((l3 @ self.params['w2']) + self.params['b2'])
-
-    def parameters(self):
-        return self.params.values()
-    
-    def param_num(self):
-        return cp.sum([t.data.size for t in self.params.values()])
-
-    def zero_grad(self):
-        for param in self.params.values():
-            param.grad.fill(0)
-
-class ConvNet:
-    def __init__(self):
-        
-        self.params = { # 2 / (# of inputs from last layer) for He initialization
-            'f1' : Tensor(cp.random.randn(8, 1, 5, 5) * cp.sqrt(2 / (28*28*1))),
-            'f1b' : Tensor(cp.zeros((1, 8, 1, 1))),
-            'f2' : Tensor(cp.random.randn(16, 8, 5, 5) * cp.sqrt(2 / (12*12*8))),
-            'f2b' : Tensor(cp.zeros((1, 16, 1, 1))),
-
-            'w1' : Tensor(cp.random.randn(4*4*16, 64) * cp.sqrt(2 / (4*4*16))),
-            'b1' : Tensor(cp.zeros((1, 64))),
-            'w2' : Tensor(cp.random.randn(64, 10) * cp.sqrt(2 / (64))),
-            'b2' : Tensor(cp.zeros((1, 10))),
-        }
-
-    def __call__(self, x:Tensor) -> Tensor:
-        l1 = (x.reshape((-1, 1, 28, 28)).conv(self.params['f1']) + self.params['f1b']).maxPool2d().relu()
-        l2 = (l1.conv(self.params['f2']) + self.params['f2b']).maxPool2d().relu()
-        l3 = ((l2.reshape((-1, self.params['w1'].data.shape[0])) @ self.params['w1']) + self.params['b1']).relu()
-        return ((l3 @ self.params['w2']) + self.params['b2'])
-
-    def parameters(self):
-        return self.params.values()
-    
-    def zero_grad(self):
-        for param in self.params.values():
-            param.grad.fill(0)
-
-    def param_num(self):
-        return cp.sum([t.data.size for t in self.params.values()])
-    
 class LinearNet:
     def __init__(self):
         
@@ -91,7 +31,7 @@ class LinearNet:
             param.grad.fill(0)
 
     def param_num(self):
-        return cp.sum([t.data.size for t in self.params.values()])
+        return cp.sum(cp.array([t.data.size for t in self.params.values()]))
 
     def __call__(self, x:Tensor) -> Tensor:
         l1 = ((x @ self.params['w1']) + self.params['b1']).relu()
@@ -112,7 +52,7 @@ def plot_kaggle_data(X, y, model, predict=False):
         random_index = cp.random.randint(X.shape[0])
         
         # Display the image
-        ax.imshow(X[random_index].reshape(28, 28), cmap='gray')
+        ax.imshow(X[random_index].reshape(28, 28).get(), cmap='gray')
 
         yhat = None
         # Predict using the Neural Network
@@ -127,12 +67,16 @@ def plot_kaggle_data(X, y, model, predict=False):
     plt.show()
 
 def write_kaggle_submission(model):
+    print('BEGINNING TEST SET INFERENCE')
+
     X = cp.loadtxt('digit-recognizer/test.csv', dtype = int, delimiter = ',', skiprows = 1) # data loading
     X = X/255  # data normalization
 
     probs, log_softmax = softmax(model(Tensor(X))) # inference
     out = cp.concatenate((cp.arange(1, X.shape[0]+1).reshape((-1, 1)), cp.argmax(probs.data, axis = 1).reshape((-1, 1))), axis = 1)
     cp.savetxt('digit-recognizer/submission.csv', out, delimiter = ',', fmt = '%s', header = 'ImageId,Label', comments = '')
+
+    print('TEST SET INFERENCE COMPLETE')
 
 def softmax(logits):
   counts = logits.exp()
@@ -145,7 +89,7 @@ def loss(X, y, model, batch_size=None, regularization=True, alpha=1e-8):
     if batch_size is None:  #dataloader
         Xb, yb = X, y
     else:
-        ri = cp.random.permutation(X.shape[0])[:batch_size] # shuffles the X indexes and returns the first 10
+        ri = cp.random.permutation(X.shape[0])[:batch_size] # shuffles the X indexes and selects the first batch_size indices
         Xb, yb = X[ri], y[ri]
 
     # x --(model)--> logits --(softmax)--> probs --(-log)--> nll loss --(avg over batch)--> cost --(backprop)--> grads
@@ -166,7 +110,6 @@ def kaggle_training(model, epochs = 10, batch_size = None, regularization = True
     # ^ NOTE: loading data from file, then splitting into labels (first col) and pixel vals
     y = cp.squeeze(y) # 2D -> 1D
     X = X/255  # data normalization
-    beta1, beta2, epsilon, weight_decay = 0.9, 0.999, 1e-10, 0.01
     print('TRAINING BEGINS (with', model.param_num(), 'parameters)')
     startTime = time.time()
 
@@ -180,31 +123,17 @@ def kaggle_training(model, epochs = 10, batch_size = None, regularization = True
         model.zero_grad()
         total_loss.backprop()
         
-        # update parameters w/ AdamW Algorithm
+        # gradient descent
         for p in model.parameters(): 
-            #p.data -= learning_rate * p.grad # TODO: ALLOW OPTIMIZER CHOICE
-            p.data -= p.data * learning_rate * weight_decay
-            p.v = (beta1 * p.v) + ((1-beta1) * p.grad)
-            p.s = (beta2 * p.s) + ((1-beta2) * p.grad * p.grad)
-            v_dp_corrected = p.v / (1 - (beta1**(k+1)))
-            s_dp_corrected = p.s / (1 - (beta2**(k+1)))
-            p.data -= learning_rate * v_dp_corrected / (cp.sqrt(s_dp_corrected) + epsilon) #doesn't work for broadasted bias v/s/grad tensors
-
+            p.data -= learning_rate * p.grad # TODO: ALLOW OPTIMIZER CHOICE
         print(f"step {k} loss {total_loss.data.real[0, 0]}, accuracy {acc*100}%")
 
-    endTime = time.time()
-    print('TRAINING COMPLETE (in', endTime - startTime, 'sec)')
+    print('TRAINING COMPLETE (in', time.time() - startTime, 'sec)')
     plot_kaggle_data(X, y, model, predict = True)
-    print('BEGINNING TEST SET INFERENCE')
-    write_kaggle_submission(model)
-    print('TEST SET INFERENCE COMPLETE')
+    #write_kaggle_submission(model)
+    
 
 ###### [ 4/4 : MAIN FUNCTION EXECUTION ] ###### 
 # NOTE: cost will not converge if learning rate is too high
-# NOTE: REMEMBER TO CHANGE SELF.TYPE IN ENGINE.PY IF SWITCHING FROM CONV NET TO LINEAR NET
 
-# for ConvNet() (NOTE: set self.type = complex):
-#kaggle_training(model = ConvNet(), epochs = 500, batch_size = 200, regularization = False, learning_rate = 0.0005, alpha = 0)
-
-# for LinearNet() (NOTE: set self.type = float):
-kaggle_training(model = LinearNet(), epochs = 300, batch_size = 500, regularization = False, learning_rate = 0.0007898, alpha = 0)
+kaggle_training(model = LinearNet(), epochs = 500, batch_size = 100, regularization = False, learning_rate = 0.01, alpha = 0)

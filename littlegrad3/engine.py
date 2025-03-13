@@ -9,10 +9,15 @@ class Tensor:
         # TODO: THIS STILL ALLOWS BROADCASTING, CHECK IF THAT'S OKAY
         # TODO: CONFIRM LITTLEGRAD SELF.PREV COMMENT THAT PREV W/O SET() BREAKS TOPOSORT BECAUSE TUPLES CAN'T ADD/REMOVE ITEMS
         # TODO: IS RPOW RIGHT?
+        # TODO: IS TILE.BACKWARD RIGHT?
         # TODO: TRY DIFFERENT ACTIVATION FUNCTIONS THAN RELU?
+        # TODO: NOT USING VECTORIZATION IN MAKE_COMPATIBLE, IS THIS OKAY?
+        # TODO: optimize and check make_compatible
+        # TODO; tile reps redefine necessary? (OPTIMIZE TILE)
         # NOTE: if other is a scalar then grad doesn't need to be tracked, it it's not a number that's user error (removed form sub())
         # NOTE: for some reason in cupy 1/b and b**-1 give slightly different answers, so Tensor and cupy array division gives slightly different answers
-
+        # NOTE: needed to do pip install PyQt5 to fix (https://stackoverflow.com/questions/77507580/userwarning-figurecanvasagg-is-non-interactive-and-thus-cannot-be-shown-plt-sh)
+        
         self.data = cp.array(data, dtype = cp.float64)    # cupy handles data type conversion, cp.array() on a cp.array does nothing
         self.data = self.data if self.data.ndim >= 2 else cp.atleast_2d(self.data)
         self.grad = cp.zeros_like(self.data)    # zeros_like() uses the same data type as its input by default
@@ -23,7 +28,7 @@ class Tensor:
     def __add__(self, other):
         """ elementwise addition of two Tensors """
 
-        other = other if isinstance(other, Tensor) else Tensor(other)
+        (self, other) = Tensor.makeCompatible(self, other, same_size = True)
         out = Tensor(self.data + other.data, (self, other), '+')
     
         def backward():
@@ -41,7 +46,7 @@ class Tensor:
     def __mul__(self, other):
         """ elementwise multiplication of two Tensors """
 
-        other = other if isinstance(other, Tensor) else Tensor(other)
+        (self, other) = Tensor.makeCompatible(self, other, same_size = True)
         out = Tensor(self.data * other.data, (self, other), '*')
     
         def backward():
@@ -81,7 +86,7 @@ class Tensor:
     def __pow__(self, other):
         """ elementwise exponentiation of two Tensors """
 
-        other = other if isinstance(other, Tensor) else Tensor(other)
+        (self, other) = Tensor.makeCompatible(self, other, same_size = True)
         out = Tensor(self.data ** other.data, (self, other), '**')
     
         def backward():
@@ -136,7 +141,7 @@ class Tensor:
         return out
     
     def transpose(self):
-        """ swaps the last two axes of a Tensor"""
+        """ swaps the last two axes of a Tensor """
 
         out = Tensor(cp.swapaxes(self.data, -2, -1), (self,), 'T')
     
@@ -146,18 +151,93 @@ class Tensor:
         out.backward = backward
         return out
     
+    def reshape(self, shape):
+        """ changes the shape of a Tensor """
+
+        out = Tensor(cp.reshape(self.data, shape), (self,), 'R')
+    
+        def backward():
+            self.grad += cp.reshape(out.grad, self.data.shape)
+        
+        out.backward = backward
+        return out
+    
+    def flatten(self):
+        """ swaps the last two axes of a Tensor"""
+
+        return self.reshape((1, -1))
+    
+    def tile(self, reps):
+        """ duplicates a Tensor a certain number of times (specified by reps) """
+
+        out = Tensor(data = cp.tile(self.data, reps), children = (self,), op = 'tile')
+
+        def backward():
+            #reps_arr = cp.array(reps)
+            reps_arr = []
+            for i in range(len(reps)):
+                if reps[i] > 1:
+                    reps_arr.append(i)
+            self.grad += cp.average(out.grad, axis = tuple(reps_arr))
+            #self.grad += cp.average(out.grad, axis = tuple(cp.arange(len(reps_arr))[(reps_arr > 1)]), keepdims = True) if cp.any((reps_arr > 1)) else out.grad # boolean array indexing
+        out.backward = backward
+        return out
+    
     def __matmul__(self, other):
         """ matrix product of two Tensors """
 
-        other = other if isinstance(other, Tensor) else Tensor(other)
+        (self, other) = Tensor.makeCompatible(self, other, same_size = False)
         out = Tensor(self.data @ other.data, (self, other), '@')
     
         def backward():
             self.grad += out.grad @ cp.swapaxes(other.data, -2, -1)
-            other.grad += cp.swapaxes(self.data, -2, -1) * out.grad
+            other.grad += cp.swapaxes(self.data, -2, -1) @ out.grad
         
         out.backward = backward
         return out
+    
+    def makeCompatible(self, other, same_size:bool): 
+        """ manual broadcasting of two Tensors to keep track of gradients """
+
+        other = other if isinstance(other, Tensor) else Tensor(other) # make sure 'other' is Tensor
+
+        # make sure self and other have same length
+        if self.data.ndim > other.data.ndim:
+            other = other.reshape(cp.concatenate((cp.ones(self.data.ndim - other.data.ndim), cp.array(other.data.shape))))
+        elif self.data.ndim < other.data.ndim:
+            self = self.reshape(cp.concatenate((cp.ones(other.data.ndim - self.data.ndim), cp.array(self.data.shape))))
+        # get broadcast repetition counts for each axis that needs broadcasting and make min broadcast count 1
+        selfShape, otherShape = [_ for _ in self.data.shape], [_ for _ in other.data.shape]
+        #selfShape, otherShape = cp.array(self.data.shape), cp.array(other.data.shape)
+        # otherBroadcastDims = (selfShape > 1) * (otherShape == 1) * selfShape # get broadcast counts
+        # otherBroadcastDims += (otherBroadcastDims == 0)                      # make min broadcast count 1
+        # selfBroadcastDims = (otherShape > 1) * (selfShape == 1) * otherShape # get broadcast counts
+        # selfBroadcastDims += (selfBroadcastDims == 0)                        # make min broadcast count 1
+
+        otherBroadcastDims = [selfShape[idx] if otherShape[idx] == 1 else 1 for idx in range(other.data.ndim)] # get broadcast counts
+        selfBroadcastDims = [otherShape[idx] if selfShape[idx] == 1 else 1 for idx in range(self.data.ndim)] # get broadcast counts
+
+        # if matmul instead of element-wise op, make inner dims compatible
+        if not same_size:
+            selfBroadcastDims[-2:] = [1, 1]
+            otherBroadcastDims[-2:] = [1, 1]
+            # cp.put(selfBroadcastDims, [-2, -1], [1, 1])
+            # cp.put(otherBroadcastDims, [-2, -1], [1, 1])
+            if self.data.shape[-1] == 1:
+                selfBroadcastDims[-1] = other.data.shape[-2] # make inner dims compatible
+            elif other.data.shape[-2] == 1:
+                otherBroadcastDims[-2] = self.data.shape[-1] # make inner dims compatible
+
+        # if any axes need broadcasting, broadcast them w/ cp.tile before returning Tensors
+        # if cp.any(selfBroadcastDims > 1):
+        #    self = self.tile(selfBroadcastDims)
+        # if cp.any(otherBroadcastDims > 1):
+        #     other = other.tile(otherBroadcastDims)
+        if cp.any(cp.array(selfBroadcastDims) > 1):
+           self = self.tile(tuple(selfBroadcastDims))
+        if cp.any(cp.array(otherBroadcastDims) > 1):
+            other = other.tile(tuple(otherBroadcastDims))
+        return (self, other)
     
     def backprop(self):
         """ automatic partial differentiation of one Tensor """
