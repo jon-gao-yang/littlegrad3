@@ -1,4 +1,4 @@
-import math
+from math import ulp
 import cupy as cp
 
 class Tensor:
@@ -9,18 +9,21 @@ class Tensor:
         # TODO: THIS STILL ALLOWS BROADCASTING, CHECK IF THAT'S OKAY
         # TODO: CONFIRM LITTLEGRAD SELF.PREV COMMENT THAT PREV W/O SET() BREAKS TOPOSORT BECAUSE TUPLES CAN'T ADD/REMOVE ITEMS
         # TODO: IS RPOW RIGHT?
-        # TODO: IS TILE.BACKWARD RIGHT?
+        # TODO: IS TILE.BACKWARD RIGHT? why average and not sum?
         # TODO: TRY DIFFERENT ACTIVATION FUNCTIONS THAN RELU?
         # TODO: NOT USING VECTORIZATION IN MAKE_COMPATIBLE, IS THIS OKAY?
+        # TODO: confirm cupy is actually using gpu
         # TODO: optimize and check make_compatible
         # TODO; tile reps redefine necessary? (OPTIMIZE TILE)
+        # TODO: optimize regularization
         # NOTE: if other is a scalar then grad doesn't need to be tracked, it it's not a number that's user error (removed form sub())
         # NOTE: for some reason in cupy 1/b and b**-1 give slightly different answers, so Tensor and cupy array division gives slightly different answers
         # NOTE: needed to do pip install PyQt5 to fix (https://stackoverflow.com/questions/77507580/userwarning-figurecanvasagg-is-non-interactive-and-thus-cannot-be-shown-plt-sh)
-        
+        # NOTE: good ideas from https://medium.com/data-science/going-beyond-99-mnist-handwritten-digits-recognition-cfff96337392
+
         self.data = cp.array(data, dtype = cp.float64)    # cupy handles data type conversion, cp.array() on a cp.array does nothing
         self.data = self.data if self.data.ndim >= 2 else cp.atleast_2d(self.data)
-        self.grad = cp.zeros_like(self.data)    # zeros_like() uses the same data type as its input by default
+        self.grad, self.v, self.s = cp.zeros_like(self.data), cp.zeros_like(self.data), cp.zeros_like(self.data) # zeros_like() uses the same data type as its input by default
         self.prev = set(children)    # tuples aka "()" are used for convenience as inputs, but need to be converted to set so elements can be added/removed later
         self.backward = lambda: None    # lambda function (aka single-line function with no name) that does nothing, that will be filled in with a custom backward function based on the operation that created that Tensor
         self.op = op
@@ -91,7 +94,7 @@ class Tensor:
     
         def backward():
             self.grad += other.data * (self.data ** (other.data - 1)) * out.grad
-            other.grad += (self.data ** other.data) * cp.log(self.data + ((self.data == 0) * math.ulp(0.0))) * out.grad
+            other.grad += (self.data ** other.data) * cp.log(self.data + ((self.data == 0) * ulp(0.0))) * out.grad
         
         out.backward = backward
         return out
@@ -170,6 +173,7 @@ class Tensor:
     def tile(self, reps):
         """ duplicates a Tensor a certain number of times (specified by reps) """
 
+        reps = reps if isinstance(reps, tuple) else tuple(reps)
         out = Tensor(data = cp.tile(self.data, reps), children = (self,), op = 'tile')
 
         def backward():
@@ -202,41 +206,28 @@ class Tensor:
         other = other if isinstance(other, Tensor) else Tensor(other) # make sure 'other' is Tensor
 
         # make sure self and other have same length
-        if self.data.ndim > other.data.ndim:
-            other = other.reshape(cp.concatenate((cp.ones(self.data.ndim - other.data.ndim), cp.array(other.data.shape))))
-        elif self.data.ndim < other.data.ndim:
-            self = self.reshape(cp.concatenate((cp.ones(other.data.ndim - self.data.ndim), cp.array(self.data.shape))))
+        dimDiff = self.data.ndim - other.data.ndim
+        if dimDiff > 0: # if self.data.ndim > other.data.ndim
+            other = other.reshape([other.data.shape[i-dimDiff] if i-dimDiff > 0 else 1 for i in range(self.data.ndim)])
+        elif dimDiff < 0: # if other.data.ndim > self.data.ndim
+            self = self.reshape([self.data.shape[i+dimDiff] if i+dimDiff > 0 else 1 for i in range(other.data.shape)])
+        
         # get broadcast repetition counts for each axis that needs broadcasting and make min broadcast count 1
-        selfShape, otherShape = [_ for _ in self.data.shape], [_ for _ in other.data.shape]
-        #selfShape, otherShape = cp.array(self.data.shape), cp.array(other.data.shape)
-        # otherBroadcastDims = (selfShape > 1) * (otherShape == 1) * selfShape # get broadcast counts
-        # otherBroadcastDims += (otherBroadcastDims == 0)                      # make min broadcast count 1
-        # selfBroadcastDims = (otherShape > 1) * (selfShape == 1) * otherShape # get broadcast counts
-        # selfBroadcastDims += (selfBroadcastDims == 0)                        # make min broadcast count 1
-
-        otherBroadcastDims = [selfShape[idx] if otherShape[idx] == 1 else 1 for idx in range(other.data.ndim)] # get broadcast counts
-        selfBroadcastDims = [otherShape[idx] if selfShape[idx] == 1 else 1 for idx in range(self.data.ndim)] # get broadcast counts
+        otherBroadcastDims = [self.data.shape[idx] if other.data.shape[idx] == 1 else 1 for idx in range(other.data.ndim)]
+        selfBroadcastDims = [other.data.shape[idx] if self.data.shape[idx] == 1 else 1 for idx in range(self.data.ndim)]
 
         # if matmul instead of element-wise op, make inner dims compatible
         if not same_size:
             selfBroadcastDims[-2:] = [1, 1]
             otherBroadcastDims[-2:] = [1, 1]
-            # cp.put(selfBroadcastDims, [-2, -1], [1, 1])
-            # cp.put(otherBroadcastDims, [-2, -1], [1, 1])
             if self.data.shape[-1] == 1:
                 selfBroadcastDims[-1] = other.data.shape[-2] # make inner dims compatible
             elif other.data.shape[-2] == 1:
                 otherBroadcastDims[-2] = self.data.shape[-1] # make inner dims compatible
 
         # if any axes need broadcasting, broadcast them w/ cp.tile before returning Tensors
-        # if cp.any(selfBroadcastDims > 1):
-        #    self = self.tile(selfBroadcastDims)
-        # if cp.any(otherBroadcastDims > 1):
-        #     other = other.tile(otherBroadcastDims)
-        if cp.any(cp.array(selfBroadcastDims) > 1):
-           self = self.tile(tuple(selfBroadcastDims))
-        if cp.any(cp.array(otherBroadcastDims) > 1):
-            other = other.tile(tuple(otherBroadcastDims))
+        self = self.tile(selfBroadcastDims) if (sorted(selfBroadcastDims)[-1] > 1) else self
+        other = other.tile(otherBroadcastDims) if sorted(otherBroadcastDims)[-1] > 1 else other
         return (self, other)
     
     def backprop(self):

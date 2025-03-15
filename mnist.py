@@ -31,7 +31,7 @@ class LinearNet:
             param.grad.fill(0)
 
     def param_num(self):
-        return cp.sum(cp.array([t.data.size for t in self.params.values()]))
+        return sum([t.data.size for t in self.params.values()])
 
     def __call__(self, x:Tensor) -> Tensor:
         l1 = ((x @ self.params['w1']) + self.params['b1']).relu()
@@ -70,7 +70,8 @@ def write_kaggle_submission(model):
     print('BEGINNING TEST SET INFERENCE')
 
     X = cp.loadtxt('digit-recognizer/test.csv', dtype = int, delimiter = ',', skiprows = 1) # data loading
-    X = X/255  # data normalization
+    # X = X/255  # data normalization
+    X = (X - cp.mean(X))/cp.std(X) # data normalization
 
     probs, log_softmax = softmax(model(Tensor(X))) # inference
     out = cp.concatenate((cp.arange(1, X.shape[0]+1).reshape((-1, 1)), cp.argmax(probs.data, axis = 1).reshape((-1, 1))), axis = 1)
@@ -100,7 +101,7 @@ def loss(X, y, model, batch_size=None, regularization=True, alpha=1e-8):
     accuracy = cp.average(cp.argmax(probs.data, axis = -1) == yb)
 
     if regularization: # L2 regularization (total_loss = data_loss + reg_loss)
-        losses += alpha * cp.sum([p.reshape((1, -1))@p.reshape((-1, 1)) for p in model.parameters()])
+        losses += alpha * sum([(p.reshape((1, -1))@p.reshape((-1, 1))).data for p in model.parameters()])
     return losses, accuracy
 
 ###### [ 3/4 : MAIN FUNCTION ] ######
@@ -109,7 +110,24 @@ def kaggle_training(model, epochs = 10, batch_size = None, regularization = True
     [y, X] = cp.split(cp.loadtxt('digit-recognizer/train.csv', dtype = int, delimiter = ',', skiprows = 1), [1], axis = 1)
     # ^ NOTE: loading data from file, then splitting into labels (first col) and pixel vals
     y = cp.squeeze(y) # 2D -> 1D
-    X = X/255  # data normalization
+
+    # image translation for data augmentation (NOTE: default cp.concatenate() axis is 0)
+    px = 1
+    Xsplit = cp.pad(X.reshape((42000, 28, 28)), px)[px:-px]                  # adding px pixels to height and width for translation
+    X = cp.concatenate((Xsplit[:, 0:-px*2, 0:-px*2].reshape((42000, 28*28)), # slice up & left       --> shifts image down & right
+                    Xsplit[:, 0:-px*2, px:-px].reshape((42000, 28*28)),      # slice up & center     --> shifts image down & center
+                    Xsplit[:, 0:-px*2, px*2:].reshape((42000, 28*28)),       # slice up & right      --> shifts image down & left
+                    Xsplit[:, px:-px, 0:-px*2].reshape((42000, 28*28)),      # slice center & left   --> shifts image center & right
+                    Xsplit[:, px:-px, px:-px].reshape((42000, 28*28)),       # slice center & center --> shifts image center & center
+                    Xsplit[:, px:-px, px*2:].reshape((42000, 28*28)),        # slice center & right  --> shifts image center & left
+                    Xsplit[:, px*2:, 0:-px*2].reshape((42000, 28*28)),       # slice down & left     --> shifts image up & right
+                    Xsplit[:, px*2:, px:-px].reshape((42000, 28*28)),        # slice down & center   --> shifts image up & center
+                    Xsplit[:, px*2:, px*2:].reshape((42000, 28*28))))        # slice down & right    --> shifts image up & left
+    y = cp.tile(y, 9) # duplicating labels for augmented images
+
+    X = (X - cp.mean(X))/cp.std(X) # data normalization
+    #X = X/255  # data normalization
+    beta1, beta2, epsilon, weight_decay = 0.9, 0.999, 1e-10, 0.01 # AdamW hyperparameter creation
     print('TRAINING BEGINS (with', model.param_num(), 'parameters)')
     startTime = time.time()
 
@@ -123,17 +141,24 @@ def kaggle_training(model, epochs = 10, batch_size = None, regularization = True
         model.zero_grad()
         total_loss.backprop()
         
-        # gradient descent
+        # update parameters w/ AdamW Algorithm
         for p in model.parameters(): 
-            p.data -= learning_rate * p.grad # TODO: ALLOW OPTIMIZER CHOICE
-        print(f"step {k} loss {total_loss.data.real[0, 0]}, accuracy {acc*100}%")
+            #p.data -= learning_rate * p.grad # TODO: ALLOW OPTIMIZER CHOICE
+            p.data -= p.data * learning_rate * weight_decay
+            p.v = (beta1 * p.v) + ((1-beta1) * p.grad)
+            p.s = (beta2 * p.s) + ((1-beta2) * p.grad * p.grad)
+            v_dp_corrected = p.v / (1 - (beta1**(k+1)))
+            s_dp_corrected = p.s / (1 - (beta2**(k+1)))
+            p.data -= learning_rate * v_dp_corrected / (cp.sqrt(s_dp_corrected) + epsilon) # doesn't work for broadasted bias v/s/grad tensors
+
+        #print(f"step {k} loss {total_loss.data.real[0, 0]}, accuracy {acc*100}%") # NOTE: COMMENT OUT THIS LINE FOR FASTER TRAINING
 
     print('TRAINING COMPLETE (in', time.time() - startTime, 'sec)')
     plot_kaggle_data(X, y, model, predict = True)
-    #write_kaggle_submission(model)
-    
+    write_kaggle_submission(model)
 
 ###### [ 4/4 : MAIN FUNCTION EXECUTION ] ###### 
 # NOTE: cost will not converge if learning rate is too high
 
-kaggle_training(model = LinearNet(), epochs = 500, batch_size = 100, regularization = False, learning_rate = 0.01, alpha = 0)
+# 03/15/25 - achieved ~98% (97.76%) accuracy on kaggle MNIST test set with <5 (4.995) seconds of training with the following command:
+kaggle_training(model = LinearNet(), epochs = 600, batch_size = 2000, regularization = False, learning_rate = 0.0025799, alpha = 0.0001)
