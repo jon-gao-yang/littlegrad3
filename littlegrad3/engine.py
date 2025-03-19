@@ -5,22 +5,6 @@ class Tensor:
     """ stores a multidimensional matrix of values and their corresponding gradients """
 
     def __init__(self, data, children = (), op = ''):    # user should be forced to specify data but not children or op
-
-        # TODO: THIS STILL ALLOWS BROADCASTING, CHECK IF THAT'S OKAY
-        # TODO: CONFIRM LITTLEGRAD SELF.PREV COMMENT THAT PREV W/O SET() BREAKS TOPOSORT BECAUSE TUPLES CAN'T ADD/REMOVE ITEMS
-        # TODO: IS RPOW RIGHT?
-        # TODO: IS TILE.BACKWARD RIGHT? why average and not sum?
-        # TODO: TRY DIFFERENT ACTIVATION FUNCTIONS THAN RELU?
-        # TODO: NOT USING VECTORIZATION IN MAKE_COMPATIBLE, IS THIS OKAY?
-        # TODO: confirm cupy is actually using gpu
-        # TODO: optimize and check make_compatible
-        # TODO; tile reps redefine necessary? (OPTIMIZE TILE)
-        # TODO: optimize regularization
-        # NOTE: if other is a scalar then grad doesn't need to be tracked, it it's not a number that's user error (removed form sub())
-        # NOTE: for some reason in cupy 1/b and b**-1 give slightly different answers, so Tensor and cupy array division gives slightly different answers
-        # NOTE: needed to do pip install PyQt5 to fix (https://stackoverflow.com/questions/77507580/userwarning-figurecanvasagg-is-non-interactive-and-thus-cannot-be-shown-plt-sh)
-        # NOTE: good ideas from https://medium.com/data-science/going-beyond-99-mnist-handwritten-digits-recognition-cfff96337392
-
         self.data = cp.array(data, dtype = cp.float64)    # cupy handles data type conversion, cp.array() on a cp.array does nothing
         self.data = self.data if self.data.ndim >= 2 else cp.atleast_2d(self.data)
         self.grad, self.v, self.s = cp.zeros_like(self.data), cp.zeros_like(self.data), cp.zeros_like(self.data) # zeros_like() uses the same data type as its input by default
@@ -177,13 +161,11 @@ class Tensor:
         out = Tensor(data = cp.tile(self.data, reps), children = (self,), op = 'tile')
 
         def backward():
-            #reps_arr = cp.array(reps)
             reps_arr = []
             for i in range(len(reps)):
                 if reps[i] > 1:
                     reps_arr.append(i)
             self.grad += cp.average(out.grad, axis = tuple(reps_arr))
-            #self.grad += cp.average(out.grad, axis = tuple(cp.arange(len(reps_arr))[(reps_arr > 1)]), keepdims = True) if cp.any((reps_arr > 1)) else out.grad # boolean array indexing
         out.backward = backward
         return out
     

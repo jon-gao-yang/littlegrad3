@@ -1,6 +1,12 @@
 <div align="center">
 
-littlegrad3: For something between [tinygrad/tinygrad](https://github.com/tinygrad/tinygrad) and [karpathy/micrograd](https://github.com/karpathy/micrograd).
+littlegrad3: for something between [tinygrad/tinygrad](https://github.com/tinygrad/tinygrad) and [karpathy/micrograd](https://github.com/karpathy/micrograd).
+
+this is far from the best deep learning framework, but it is a deep learning framework. it uses the [CuPy](https://cupy.dev/) array library as a backend to perform GPU accelerated computing, and achieved ~98% accuracy on [kaggle](https://www.kaggle.com/competitions/digit-recognizer)'s MNIST test set with <5s of training time with [mnist.py](/mnist.py):
+
+![/misc-resources/98%20kaggle.png](/misc-resources/98%20kaggle.png)
+
+![/misc-resources/98%20vscode.png](/misc-resources/98%20vscode.png)
 
 </div>
 
@@ -117,24 +123,27 @@ if the same variable (parameter) is used in multiple intermediate functions, the
 
 ### LIBRARY PROGRAMMING NOTES
 
-LAMBDA FUNCTIONS [[source](https://www.w3schools.com/python/python_lambda.asp)]
+LAMBDA FUNCTIONS IN TENSOR INITIALIZATION [[source](https://www.w3schools.com/python/python_lambda.asp)]
 
 a lambda function is a function with no name that can only execute a single expression. the entire function can be written in one line, for example `lambda a, b: a+b` which returns the sum of its two arguments. the Tensor `__init__()` method contains a `lamda: None` function as a placeholder, which is later replaced with an actual function that backpropagates a gradient through a specific array operation.
 
-TODO:
+TENSOR OBJECTS [[source](https://github.com/karpathy/micrograd)]
 
-copy all the littlegrad2 Tensor methods
+a Tensor object contains two arrays--one for values and one for gradients (each value has a corresponding gradient). a Tensor operation accounts for both arrays--first the Tensor operation calls a CuPy array operation to act on the value arrays of the input Tensors (forward pass). then a backpropagation function is stored in the output Tensor that will calculate the correct gradients for the input Tensors during the backward pass.
 
-explain all the Tensor methods
+a higher-level backpropagation function can be called on the final output of a group of Tensor operations (usually the cost). this sets the final output Tensor's gradients to 1.0, sorts all the Tensors involved (using a topological sort algorithm) and then iteratively calls the local backpropogation function of each Tensor until all the involved Tensors' gradients have been calculated.
 
-get mnist.py LinearNet working
+to maintain the pairing between value and gradient the Tensor.make_compatible() function was defined. this function replaces normal array broadcasting (which does not broadcast the gradients), and manually broadcasts both the value and gradient arrays so array operations do not affect gradient calculation.
 
-WHY SET() IS NECESSARY FOR TENSOR CHILDREN
+TOPOLOGICAL SORT
 
-TENSOR IMPLEMENTATION NOTES
+if higher-level backpropagation simply started from the final output Tensor and iteratively called local backpropagation on previous Tensors, then a Tensor's local backpropagation function would get called during after its first gradient update, and not its last. This means that if a Tensor receives multiple gradient updates from multiple Tensor operations, only the first Tensor operation would be sucessfully backpropagated. In order to calculate gradients correctly, a Tensor needs to call its local backpropogation function during its last gradient update rather than its first, which means Tensors need to be added to a list during their first appearence in the forward pass. the topological sort algorithm recursively searches previous Tensors (children) until it arrives at the starting Tensors. only then are Tensors added to a list (and also a set to avoid duplicates later in the tree). after nodes are added from the beginning, the list is reversed, and then the local backwards functions are called starting with the final output Tensor. this way, Tensors pass their own gradients backwards when they have the correct gradient, and not before.
 
-a tensor is essentially a collection of two CuPy arrays--one to store values and one to store gradients. the tensor methods essentially supplement the CuPy array methods so that the gradients know how to backpropagate through them.
+RATIONALE FOR USING SETS [[source](https://www.youtube.com/watch?v=VMj-3S1tku0)]
 
-each tensor method needs to do 3 things: define a forward pass operation, define a backward pass operation, and keep track gradients (no adding a tensor to an integer, careless broadcasting, or anything else that would mess up the gradient path during backward pass)
+Tensors are defined with their "children" argument being a tuple. this is because of the convenience of using paretheses to create them. however, tuples cannot be used for a backward pass because they are completely unchangable--a Tensor stored as a tuple element will not be able to update its gradient array for backpropagation. because of this, the "children" tuple gets converted to a set during Tensor initization. list could have also worked, but they allow duplicates, are less convenient to create than tuples ([] vs ()), and are less efficient than sets for backpropagation.
 
-there also needs to be an overall backward pass function that sorts all the local array operations into the appropriate sequence, sets the cost gradient to 1, and iteratively calls the backward method for each array operation until all parameter gradients are correctly calculated.
+MISC NOTES
+- NOTE: for some reason in CuPy 1/b and b**-1 give slightly different answers, so Tensor and cupy array division gives slightly different answers
+- NOTE: fixed matplotlib error using `pip install PyQt5` from https://stackoverflow.com/questions/77507580/userwarning-figurecanvasagg-is-non-interactive-and-thus-cannot-be-shown-plt-sh
+- NOTE: mnist.py data augmentation and normalization based on https://medium.com/data-science/going-beyond-99-mnist-handwritten-digits-recognition-cfff96337392
